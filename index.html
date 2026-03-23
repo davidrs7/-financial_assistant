@@ -717,6 +717,7 @@ function toggleTheme(){
   darkMode = !darkMode;
   document.documentElement.setAttribute('data-theme', darkMode?'dark':'light');
   $('mode-icon').textContent = darkMode ? '🌙' : '☀️';
+  saveState();
   members.forEach(m => { if(m.charts) refreshChartColors(m); });
 }
 function refreshChartColors(m){
@@ -799,11 +800,14 @@ $('modal').addEventListener('click', e=>{ if(e.target===$('modal')) hideNewProfi
 
 // ══ WELCOME CARDS CLICK HANDLER ══
 document.addEventListener('DOMContentLoaded', () => {
+  // Wire welcome cards
   const welcomeCards = $('welcome')?.querySelectorAll('.wc');
   if(welcomeCards){
     welcomeCards[0]?.addEventListener('click', () => showNewProfile('personal'));
     welcomeCards[1]?.addEventListener('click', () => showNewProfile('empresa'));
   }
+  // Restore persisted data
+  loadState();
 });
 
 // ══════════════════════════════
@@ -811,6 +815,64 @@ document.addEventListener('DOMContentLoaded', () => {
 // ══════════════════════════════
 let members = [];
 let activeId = null;
+
+// ══════════════════════════════
+//  LOCALSTORAGE PERSISTENCE
+// ══════════════════════════════
+const LS_KEY = 'asesor_ia_v1';
+
+function saveState(){
+  try {
+    const state = {
+      members: members.map(m=>({ id:m.id, name:m.name, data:m.data })),
+      simProducts,
+      simPeriods,
+      darkMode,
+      activeId
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  } catch(e){ /* storage full or unavailable */ }
+}
+
+function loadState(){
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const state = JSON.parse(raw);
+    if(!state || !Array.isArray(state.members) || state.members.length===0) return false;
+
+    // Restore theme
+    if(typeof state.darkMode==='boolean' && !state.darkMode){
+      darkMode = false;
+      document.documentElement.setAttribute('data-theme','light');
+      const mi=$('mode-icon'); if(mi) mi.textContent='\u2600\ufe0f';
+    }
+
+    // Restore simulator state
+    if(state.simProducts) Object.assign(simProducts, state.simProducts);
+    if(state.simPeriods)  Object.assign(simPeriods,  state.simPeriods);
+
+    // Rebuild member panes
+    $('welcome').style.display='none';
+    state.members.forEach(saved=>{
+      const m={id:saved.id, name:saved.name, data:saved.data, charts:{}};
+      members.push(m);
+      renderTab(m);
+      if(m.data.type==='personal'){ renderPersonPane(m); } else { renderBizPane(m); }
+    });
+
+    // Activate last active
+    const toActivate = state.activeId && members.find(m=>m.id===state.activeId)
+      ? state.activeId : members[0]?.id;
+    if(toActivate) activate(toActivate);
+
+    return true;
+  } catch(e){ console.warn('Could not restore state:',e); return false; }
+}
+
+function clearState(){
+  try { localStorage.removeItem(LS_KEY); } catch(e){}
+}
 
 // ══════════════════════════════
 //  DEFAULT DATA — PERSONAL
@@ -892,6 +954,7 @@ function createPersonWithTemplate(name, template){
   renderTab(m);
   renderPersonPane(m);
   activate(m.id);
+  saveState();
 }
 function createBusiness(name){
   const m = {id:uid(), name, data:defaultBizData(), charts:{}};
@@ -900,6 +963,7 @@ function createBusiness(name){
   renderTab(m);
   renderBizPane(m);
   activate(m.id);
+  saveState();
 }
 function deleteMember(id){
   members = members.filter(m=>m.id!==id);
@@ -907,6 +971,7 @@ function deleteMember(id){
   $('pane-'+id)?.remove();
   if(!members.length){ $('welcome').style.display=''; activeId=null; const fb=$('float-charts-btn'); if(fb) fb.classList.remove('visible'); }
   else activate(members[members.length-1].id);
+  saveState();
 }
 
 function renderTab(m){
@@ -975,6 +1040,7 @@ function updateName(id,val){
   m.name=val||'Sin nombre';
   const dn=$('dn-'+id); if(dn) dn.textContent=m.name;
   const tab=$('tab-'+id); if(tab) tab.innerHTML=`<span class="av">${ini(m.name)}</span>${m.name}`;
+  saveState();
 }
 
 // ══════════════════════════════
@@ -985,12 +1051,15 @@ function updateItem(mid,key,itemId,val){
   const item=m.data[key]?.find(x=>x.id===itemId); if(!item) return;
   item.val=parseFloat(val)||0;
   m.data.type==='personal' ? recalcPerson(m) : recalcBiz(m);
+  saveState();
 }
 function delItem(mid,key,itemId){
+  saveState();
   const m=members.find(x=>x.id===mid); if(!m) return;
   m.data[key]=m.data[key].filter(x=>x.id!==itemId);
   m.data.type==='personal' ? renderPersonInputs(m) : renderBizInputs(m);
   m.data.type==='personal' ? recalcPerson(m) : recalcBiz(m);
+  saveState();
 }
 function addItem(mid,key,nameId,amtId,catDefault){
   const m=members.find(x=>x.id===mid); if(!m) return;
@@ -1003,6 +1072,7 @@ function addItem(mid,key,nameId,amtId,catDefault){
   ne.value=''; ae.value='';
   m.data.type==='personal' ? renderPersonInputs(m) : renderBizInputs(m);
   m.data.type==='personal' ? recalcPerson(m) : recalcBiz(m);
+  saveState();
 }
 function toggleFixed(mid,key,itemId){
   const m=members.find(x=>x.id===mid); if(!m) return;
@@ -2014,12 +2084,14 @@ function addSimProduct(mid){
   });
   renderSimProducts(mid);
   recalcSim(mid);
+  saveState();
 }
 
 function delSimProduct(mid, pid){
   simProducts[mid]=(simProducts[mid]||[]).filter(p=>p.id!==pid);
   renderSimProducts(mid);
   recalcSim(mid);
+  saveState();
 }
 
 function toggleSimProduct(mid, pid){
@@ -2037,6 +2109,7 @@ function updateSimField(mid, pid, field, val){
     const nb=$(`spnb-${pid}`); if(nb) nb.value=val||'';
   }
   recalcSim(mid);
+  saveState();
 }
 
 function renderSimProducts(mid){
@@ -2856,6 +2929,9 @@ window.showChartsModal = showChartsModal;
 
 // ══ EXPOSE ALL PUBLIC FUNCTIONS ON WINDOW ══
 // (required so inline onclick= handlers in HTML can find them)
+window.saveState        = saveState;
+window.loadState        = loadState;
+window.clearState       = clearState;
 window.toggleTheme      = toggleTheme;
 window.updateDistribution = updateDistribution;
 window.setTemplate      = setTemplate;
